@@ -3,13 +3,22 @@ import { ToolSidebar } from '@/components/ToolSidebar';
 import { ConfigPanel } from '@/components/ConfigPanel';
 import { TerminalOutput } from '@/components/TerminalOutput';
 import { ScanHistory } from '@/components/ScanHistory';
+import { ServerStatus } from '@/components/ServerStatus';
+import { ServerSettings } from '@/components/ServerSettings';
 import { PentestTool, ScanResult } from '@/lib/pentestTools';
 import { simulateScan } from '@/lib/scanSimulator';
 import { exportToPDF } from '@/lib/pdfExport';
+import { useTerminalServer, ServerConfig } from '@/hooks/useTerminalServer';
 import { toast } from 'sonner';
 import { Shield, Terminal, History, Zap } from 'lucide-react';
 
 const STORAGE_KEY = 'pentest-scan-history';
+const SERVER_CONFIG_KEY = 'pentest-server-config';
+
+const defaultServerConfig: ServerConfig = {
+  url: 'ws://localhost:8080',
+  enabled: false
+};
 
 export default function Index() {
   const [selectedTool, setSelectedTool] = useState<PentestTool | null>(null);
@@ -17,14 +26,62 @@ export default function Index() {
   const [history, setHistory] = useState<ScanResult[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [activeTab, setActiveTab] = useState<'config' | 'history'>('config');
+  const [serverConfig, setServerConfig] = useState<ServerConfig>(() => {
+    const saved = localStorage.getItem(SERVER_CONFIG_KEY);
+    return saved ? JSON.parse(saved) : defaultServerConfig;
+  });
+
+  // Terminal server hook
+  const terminalServer = useTerminalServer(serverConfig, {
+    onOutput: (scanId, data) => {
+      setCurrentScan((prev) => {
+        if (prev && prev.id === scanId) {
+          return { ...prev, output: prev.output + data };
+        }
+        return prev;
+      });
+    },
+    onScanCompleted: (scanId, exitCode) => {
+      setCurrentScan((prev) => {
+        if (prev && prev.id === scanId) {
+          const completed: ScanResult = {
+            ...prev,
+            status: exitCode === 0 ? 'completed' : 'error',
+            duration: Date.now() - new Date(prev.timestamp).getTime()
+          };
+          setHistory((h) => [completed, ...h]);
+          toast.success(`${prev.toolName} scan completed`);
+          return completed;
+        }
+        return prev;
+      });
+      setIsRunning(false);
+    },
+    onScanError: (scanId, error) => {
+      setCurrentScan((prev) => {
+        if (prev && prev.id === scanId) {
+          const failed: ScanResult = {
+            ...prev,
+            output: prev.output + `\n[ERROR] ${error}`,
+            status: 'error',
+            duration: Date.now() - new Date(prev.timestamp).getTime()
+          };
+          setHistory((h) => [failed, ...h]);
+          toast.error('Scan failed');
+          return failed;
+        }
+        return prev;
+      });
+      setIsRunning(false);
+    }
+  });
 
   // Load history from localStorage
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       try {
-        const parsed = JSON.parse(saved);
-        setHistory(parsed);
+        setHistory(JSON.parse(saved));
       } catch (e) {
         console.error('Failed to load scan history');
       }
@@ -36,13 +93,19 @@ export default function Index() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
   }, [history]);
 
+  // Save server config
+  useEffect(() => {
+    localStorage.setItem(SERVER_CONFIG_KEY, JSON.stringify(serverConfig));
+  }, [serverConfig]);
+
   const handleExecute = useCallback(async (command: string, values: Record<string, any>) => {
     if (!selectedTool) return;
 
     const target = values.target || values.url || values.host || values.domain || 'unknown';
+    const scanId = `scan-${Date.now()}`;
     
     const newScan: ScanResult = {
-      id: `scan-${Date.now()}`,
+      id: scanId,
       toolId: selectedTool.id,
       toolName: selectedTool.name,
       target,
@@ -54,7 +117,19 @@ export default function Index() {
 
     setCurrentScan(newScan);
     setIsRunning(true);
+
+    // Use real terminal server if connected
+    if (terminalServer.isConnected) {
+      try {
+        terminalServer.executeCommand(scanId, command, selectedTool.name, target);
+      } catch (error) {
+        toast.error('Failed to execute command: ' + (error as Error).message);
+        setIsRunning(false);
+      }
+      return;
+    }
     
+    // Fallback to simulation
     const startTime = Date.now();
     let output = '';
 
@@ -73,7 +148,7 @@ export default function Index() {
 
       setCurrentScan(completedScan);
       setHistory((prev) => [completedScan, ...prev]);
-      toast.success(`${selectedTool.name} scan completed`);
+      toast.success(`${selectedTool.name} scan completed (simulated)`);
     } catch (error) {
       const errorScan: ScanResult = {
         ...newScan,
@@ -88,7 +163,16 @@ export default function Index() {
     } finally {
       setIsRunning(false);
     }
-  }, [selectedTool]);
+  }, [selectedTool, terminalServer]);
+
+  const handleCancelScan = useCallback(() => {
+    if (currentScan && isRunning) {
+      terminalServer.cancelCommand(currentScan.id);
+      setCurrentScan((prev) => prev ? { ...prev, status: 'error', output: prev.output + '\n[CANCELLED] Scan cancelled by user' } : null);
+      setIsRunning(false);
+      toast.info('Scan cancelled');
+    }
+  }, [currentScan, isRunning, terminalServer]);
 
   const handleSelectFromHistory = (scan: ScanResult) => {
     setCurrentScan(scan);
@@ -132,7 +216,16 @@ export default function Index() {
           </div>
         </div>
         
-        <div className="ml-auto flex items-center gap-4 relative z-10">
+        <div className="ml-auto flex items-center gap-3 relative z-10">
+          <ServerStatus 
+            status={terminalServer.status} 
+            error={terminalServer.error}
+            serverUrl={serverConfig.url}
+          />
+          <ServerSettings 
+            config={serverConfig} 
+            onConfigChange={setServerConfig} 
+          />
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Zap className="w-4 h-4 text-primary animate-pulse" />
             <span>15 Tools Ready</span>
