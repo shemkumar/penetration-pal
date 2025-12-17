@@ -5,7 +5,7 @@ import { TerminalOutput } from '@/components/TerminalOutput';
 import { ScanHistory } from '@/components/ScanHistory';
 import { ServerStatus } from '@/components/ServerStatus';
 import { ServerSettings } from '@/components/ServerSettings';
-import { PentestTool, ScanResult } from '@/lib/pentestTools';
+import { PentestTool, ScanResult, pentestTools } from '@/lib/pentestTools';
 import { simulateScan } from '@/lib/scanSimulator';
 import { exportToPDF } from '@/lib/pdfExport';
 import { useTerminalServer, ServerConfig } from '@/hooks/useTerminalServer';
@@ -228,7 +228,7 @@ export default function Index() {
           />
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Zap className="w-4 h-4 text-primary animate-pulse" />
-            <span>15 Tools Ready</span>
+            <span>{pentestTools.length} Tools Ready</span>
           </div>
         </div>
       </header>
