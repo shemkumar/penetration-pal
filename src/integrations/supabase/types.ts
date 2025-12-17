@@ -14,7 +14,48 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      scan_results: {
+        Row: {
+          command: string
+          completed_at: string | null
+          created_at: string
+          exit_code: number | null
+          id: string
+          output: string
+          started_at: string
+          status: string
+          target: string
+          tool_id: string
+          tool_name: string
+        }
+        Insert: {
+          command: string
+          completed_at?: string | null
+          created_at?: string
+          exit_code?: number | null
+          id?: string
+          output?: string
+          started_at?: string
+          status?: string
+          target: string
+          tool_id: string
+          tool_name: string
+        }
+        Update: {
+          command?: string
+          completed_at?: string | null
+          created_at?: string
+          exit_code?: number | null
+          id?: string
+          output?: string
+          started_at?: string
+          status?: string
+          target?: string
+          tool_id?: string
+          tool_name?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
