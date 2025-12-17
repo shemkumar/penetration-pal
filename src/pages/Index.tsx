@@ -9,10 +9,10 @@ import { PentestTool, ScanResult, pentestTools } from '@/lib/pentestTools';
 import { simulateScan } from '@/lib/scanSimulator';
 import { exportToPDF } from '@/lib/pdfExport';
 import { useTerminalServer, ServerConfig } from '@/hooks/useTerminalServer';
+import { useScanResults } from '@/hooks/useScanResults';
 import { toast } from 'sonner';
-import { Shield, Terminal, History, Zap } from 'lucide-react';
+import { Shield, Terminal, History, Zap, Database } from 'lucide-react';
 
-const STORAGE_KEY = 'pentest-scan-history';
 const SERVER_CONFIG_KEY = 'pentest-server-config';
 
 const defaultServerConfig: ServerConfig = {
@@ -23,7 +23,6 @@ const defaultServerConfig: ServerConfig = {
 export default function Index() {
   const [selectedTool, setSelectedTool] = useState<PentestTool | null>(null);
   const [currentScan, setCurrentScan] = useState<ScanResult | null>(null);
-  const [history, setHistory] = useState<ScanResult[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [activeTab, setActiveTab] = useState<'config' | 'history'>('config');
   const [serverConfig, setServerConfig] = useState<ServerConfig>(() => {
@@ -31,67 +30,77 @@ export default function Index() {
     return saved ? JSON.parse(saved) : defaultServerConfig;
   });
 
+  // Database hook for scan results
+  const { 
+    scanHistory, 
+    loading: historyLoading, 
+    createScan, 
+    appendOutput, 
+    completeScan, 
+    deleteScan, 
+    deleteAllScans 
+  } = useScanResults();
+
+  // Map to track database scan IDs
+  const [scanIdMap, setScanIdMap] = useState<Record<string, string>>({});
+
   // Terminal server hook
   const terminalServer = useTerminalServer(serverConfig, {
-    onOutput: (scanId, data) => {
+    onOutput: async (scanId, data) => {
       setCurrentScan((prev) => {
         if (prev && prev.id === scanId) {
           return { ...prev, output: prev.output + data };
         }
         return prev;
       });
+      // Update database
+      const dbId = scanIdMap[scanId];
+      if (dbId) {
+        await appendOutput(dbId, data);
+      }
     },
-    onScanCompleted: (scanId, exitCode) => {
+    onScanCompleted: async (scanId, exitCode) => {
+      const status = exitCode === 0 ? 'completed' : 'error';
       setCurrentScan((prev) => {
         if (prev && prev.id === scanId) {
-          const completed: ScanResult = {
+          return {
             ...prev,
-            status: exitCode === 0 ? 'completed' : 'error',
+            status,
             duration: Date.now() - new Date(prev.timestamp).getTime()
           };
-          setHistory((h) => [completed, ...h]);
-          toast.success(`${prev.toolName} scan completed`);
-          return completed;
         }
         return prev;
       });
+      // Update database
+      const dbId = scanIdMap[scanId];
+      if (dbId) {
+        await completeScan(dbId, status, exitCode);
+      }
+      toast.success('Scan completed');
       setIsRunning(false);
     },
-    onScanError: (scanId, error) => {
+    onScanError: async (scanId, error) => {
       setCurrentScan((prev) => {
         if (prev && prev.id === scanId) {
-          const failed: ScanResult = {
+          return {
             ...prev,
             output: prev.output + `\n[ERROR] ${error}`,
             status: 'error',
             duration: Date.now() - new Date(prev.timestamp).getTime()
           };
-          setHistory((h) => [failed, ...h]);
-          toast.error('Scan failed');
-          return failed;
         }
         return prev;
       });
+      // Update database
+      const dbId = scanIdMap[scanId];
+      if (dbId) {
+        await appendOutput(dbId, `\n[ERROR] ${error}`);
+        await completeScan(dbId, 'error');
+      }
+      toast.error('Scan failed');
       setIsRunning(false);
     }
   });
-
-  // Load history from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        setHistory(JSON.parse(saved));
-      } catch (e) {
-        console.error('Failed to load scan history');
-      }
-    }
-  }, []);
-
-  // Save history to localStorage
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
-  }, [history]);
 
   // Save server config
   useEffect(() => {
@@ -101,11 +110,11 @@ export default function Index() {
   const handleExecute = useCallback(async (command: string, values: Record<string, any>) => {
     if (!selectedTool) return;
 
-    const target = values.target || values.url || values.host || values.domain || 'unknown';
-    const scanId = `scan-${Date.now()}`;
+    const target = values.target || values.url || values.host || values.domain || values.endpoint || 'unknown';
+    const localScanId = `scan-${Date.now()}`;
     
     const newScan: ScanResult = {
-      id: scanId,
+      id: localScanId,
       toolId: selectedTool.id,
       toolName: selectedTool.name,
       target,
@@ -118,12 +127,23 @@ export default function Index() {
     setCurrentScan(newScan);
     setIsRunning(true);
 
+    // Create scan in database
+    const dbScanId = await createScan(newScan);
+    if (dbScanId) {
+      setScanIdMap(prev => ({ ...prev, [localScanId]: dbScanId }));
+      // Update local scan with DB id for consistency
+      setCurrentScan(prev => prev ? { ...prev, id: dbScanId } : null);
+    }
+
     // Use real terminal server if connected
     if (terminalServer.isConnected) {
       try {
-        terminalServer.executeCommand(scanId, command, selectedTool.name, target);
+        terminalServer.executeCommand(localScanId, command, selectedTool.name, target);
       } catch (error) {
         toast.error('Failed to execute command: ' + (error as Error).message);
+        if (dbScanId) {
+          await completeScan(dbScanId, 'error');
+        }
         setIsRunning(false);
       }
       return;
@@ -134,52 +154,70 @@ export default function Index() {
     let output = '';
 
     try {
-      await simulateScan(selectedTool, values, (line) => {
+      await simulateScan(selectedTool, values, async (line) => {
         output += line + '\n';
         setCurrentScan((prev) => prev ? { ...prev, output } : null);
       });
 
       const completedScan: ScanResult = {
         ...newScan,
+        id: dbScanId || localScanId,
         output,
         status: 'completed',
         duration: Date.now() - startTime,
       };
 
       setCurrentScan(completedScan);
-      setHistory((prev) => [completedScan, ...prev]);
+      
+      if (dbScanId) {
+        await appendOutput(dbScanId, output);
+        await completeScan(dbScanId, 'completed');
+      }
+      
       toast.success(`${selectedTool.name} scan completed (simulated)`);
     } catch (error) {
+      const errorOutput = output + '\n[ERROR] Scan failed: ' + (error as Error).message;
       const errorScan: ScanResult = {
         ...newScan,
-        output: output + '\n[ERROR] Scan failed: ' + (error as Error).message,
+        id: dbScanId || localScanId,
+        output: errorOutput,
         status: 'error',
         duration: Date.now() - startTime,
       };
 
       setCurrentScan(errorScan);
-      setHistory((prev) => [errorScan, ...prev]);
+      
+      if (dbScanId) {
+        await appendOutput(dbScanId, `\n[ERROR] Scan failed: ${(error as Error).message}`);
+        await completeScan(dbScanId, 'error');
+      }
+      
       toast.error('Scan failed');
     } finally {
       setIsRunning(false);
     }
-  }, [selectedTool, terminalServer]);
+  }, [selectedTool, terminalServer, createScan, appendOutput, completeScan]);
 
-  const handleCancelScan = useCallback(() => {
+  const handleCancelScan = useCallback(async () => {
     if (currentScan && isRunning) {
       terminalServer.cancelCommand(currentScan.id);
       setCurrentScan((prev) => prev ? { ...prev, status: 'error', output: prev.output + '\n[CANCELLED] Scan cancelled by user' } : null);
+      
+      const dbId = scanIdMap[currentScan.id] || currentScan.id;
+      await appendOutput(dbId, '\n[CANCELLED] Scan cancelled by user');
+      await completeScan(dbId, 'error');
+      
       setIsRunning(false);
       toast.info('Scan cancelled');
     }
-  }, [currentScan, isRunning, terminalServer]);
+  }, [currentScan, isRunning, terminalServer, scanIdMap, appendOutput, completeScan]);
 
   const handleSelectFromHistory = (scan: ScanResult) => {
     setCurrentScan(scan);
   };
 
-  const handleDeleteScan = (id: string) => {
-    setHistory((prev) => prev.filter((s) => s.id !== id));
+  const handleDeleteScan = async (id: string) => {
+    await deleteScan(id);
     if (currentScan?.id === id) {
       setCurrentScan(null);
     }
@@ -191,8 +229,8 @@ export default function Index() {
     toast.success('PDF report exported');
   };
 
-  const handleClearAll = () => {
-    setHistory([]);
+  const handleClearAll = async () => {
+    await deleteAllScans();
     setCurrentScan(null);
     toast.success('History cleared');
   };
@@ -217,6 +255,10 @@ export default function Index() {
         </div>
         
         <div className="ml-auto flex items-center gap-3 relative z-10">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Database className="w-4 h-4 text-green-500" />
+            <span>Cloud Synced</span>
+          </div>
           <ServerStatus 
             status={terminalServer.status} 
             error={terminalServer.error}
@@ -266,9 +308,9 @@ export default function Index() {
             >
               <History className="w-4 h-4" />
               History
-              {history.length > 0 && (
+              {scanHistory.length > 0 && (
                 <span className="ml-1 px-1.5 py-0.5 text-xs rounded bg-primary/20 text-primary">
-                  {history.length}
+                  {scanHistory.length}
                 </span>
               )}
             </button>
@@ -296,7 +338,7 @@ export default function Index() {
               )
             ) : (
               <ScanHistory
-                history={history}
+                history={scanHistory}
                 onSelect={handleSelectFromHistory}
                 onDelete={handleDeleteScan}
                 onExport={handleExportPDF}
