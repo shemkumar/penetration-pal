@@ -41,64 +41,71 @@ export default function Index() {
     deleteAllScans 
   } = useScanResults();
 
-  // Map to track database scan IDs
-  const [scanIdMap, setScanIdMap] = useState<Record<string, string>>({});
+  // Track active scan's local ID for terminal server matching
+  const [activeScanLocalId, setActiveScanLocalId] = useState<string | null>(null);
+  const [activeScanDbId, setActiveScanDbId] = useState<string | null>(null);
 
   // Terminal server hook
   const terminalServer = useTerminalServer(serverConfig, {
     onOutput: async (scanId, data) => {
-      setCurrentScan((prev) => {
-        if (prev && prev.id === scanId) {
-          return { ...prev, output: prev.output + data };
+      // Match using the local ID that terminal server knows
+      if (scanId === activeScanLocalId) {
+        setCurrentScan((prev) => {
+          if (prev) {
+            return { ...prev, output: prev.output + data };
+          }
+          return prev;
+        });
+        // Update database
+        if (activeScanDbId) {
+          await appendOutput(activeScanDbId, data);
         }
-        return prev;
-      });
-      // Update database
-      const dbId = scanIdMap[scanId];
-      if (dbId) {
-        await appendOutput(dbId, data);
       }
     },
     onScanCompleted: async (scanId, exitCode) => {
-      const status = exitCode === 0 ? 'completed' : 'error';
-      setCurrentScan((prev) => {
-        if (prev && prev.id === scanId) {
-          return {
-            ...prev,
-            status,
-            duration: Date.now() - new Date(prev.timestamp).getTime()
-          };
+      if (scanId === activeScanLocalId) {
+        const status = exitCode === 0 ? 'completed' : 'error';
+        setCurrentScan((prev) => {
+          if (prev) {
+            return {
+              ...prev,
+              status,
+              duration: Date.now() - new Date(prev.timestamp).getTime()
+            };
+          }
+          return prev;
+        });
+        // Update database
+        if (activeScanDbId) {
+          await completeScan(activeScanDbId, status, exitCode);
         }
-        return prev;
-      });
-      // Update database
-      const dbId = scanIdMap[scanId];
-      if (dbId) {
-        await completeScan(dbId, status, exitCode);
+        toast.success('Scan completed');
+        setIsRunning(false);
+        setActiveScanLocalId(null);
       }
-      toast.success('Scan completed');
-      setIsRunning(false);
     },
     onScanError: async (scanId, error) => {
-      setCurrentScan((prev) => {
-        if (prev && prev.id === scanId) {
-          return {
-            ...prev,
-            output: prev.output + `\n[ERROR] ${error}`,
-            status: 'error',
-            duration: Date.now() - new Date(prev.timestamp).getTime()
-          };
+      if (scanId === activeScanLocalId) {
+        setCurrentScan((prev) => {
+          if (prev) {
+            return {
+              ...prev,
+              output: prev.output + `\n[ERROR] ${error}`,
+              status: 'error',
+              duration: Date.now() - new Date(prev.timestamp).getTime()
+            };
+          }
+          return prev;
+        });
+        // Update database
+        if (activeScanDbId) {
+          await appendOutput(activeScanDbId, `\n[ERROR] ${error}`);
+          await completeScan(activeScanDbId, 'error');
         }
-        return prev;
-      });
-      // Update database
-      const dbId = scanIdMap[scanId];
-      if (dbId) {
-        await appendOutput(dbId, `\n[ERROR] ${error}`);
-        await completeScan(dbId, 'error');
+        toast.error('Scan failed');
+        setIsRunning(false);
+        setActiveScanLocalId(null);
       }
-      toast.error('Scan failed');
-      setIsRunning(false);
     }
   });
 
@@ -126,11 +133,12 @@ export default function Index() {
 
     setCurrentScan(newScan);
     setIsRunning(true);
+    setActiveScanLocalId(localScanId);
 
     // Create scan in database
     const dbScanId = await createScan(newScan);
     if (dbScanId) {
-      setScanIdMap(prev => ({ ...prev, [localScanId]: dbScanId }));
+      setActiveScanDbId(dbScanId);
       // Update local scan with DB id for consistency
       setCurrentScan(prev => prev ? { ...prev, id: dbScanId } : null);
     }
@@ -145,6 +153,8 @@ export default function Index() {
           await completeScan(dbScanId, 'error');
         }
         setIsRunning(false);
+        setActiveScanLocalId(null);
+        setActiveScanDbId(null);
       }
       return;
     }
@@ -195,22 +205,27 @@ export default function Index() {
       toast.error('Scan failed');
     } finally {
       setIsRunning(false);
+      setActiveScanLocalId(null);
+      setActiveScanDbId(null);
     }
   }, [selectedTool, terminalServer, createScan, appendOutput, completeScan]);
 
   const handleCancelScan = useCallback(async () => {
-    if (currentScan && isRunning) {
-      terminalServer.cancelCommand(currentScan.id);
+    if (currentScan && isRunning && activeScanLocalId) {
+      terminalServer.cancelCommand(activeScanLocalId);
       setCurrentScan((prev) => prev ? { ...prev, status: 'error', output: prev.output + '\n[CANCELLED] Scan cancelled by user' } : null);
       
-      const dbId = scanIdMap[currentScan.id] || currentScan.id;
-      await appendOutput(dbId, '\n[CANCELLED] Scan cancelled by user');
-      await completeScan(dbId, 'error');
+      if (activeScanDbId) {
+        await appendOutput(activeScanDbId, '\n[CANCELLED] Scan cancelled by user');
+        await completeScan(activeScanDbId, 'error');
+      }
       
       setIsRunning(false);
+      setActiveScanLocalId(null);
+      setActiveScanDbId(null);
       toast.info('Scan cancelled');
     }
-  }, [currentScan, isRunning, terminalServer, scanIdMap, appendOutput, completeScan]);
+  }, [currentScan, isRunning, activeScanLocalId, activeScanDbId, terminalServer, appendOutput, completeScan]);
 
   const handleSelectFromHistory = (scan: ScanResult) => {
     setCurrentScan(scan);
