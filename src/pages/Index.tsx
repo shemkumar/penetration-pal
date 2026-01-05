@@ -11,7 +11,9 @@ import { exportToPDF } from '@/lib/pdfExport';
 import { useTerminalServer, ServerConfig } from '@/hooks/useTerminalServer';
 import { useScanResults } from '@/hooks/useScanResults';
 import { toast } from 'sonner';
-import { Shield, Terminal, History, Zap, Database } from 'lucide-react';
+import { Shield, Terminal, History, Zap, Database, LogOut } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
+import { Button } from '@/components/ui/button';
 
 const SERVER_CONFIG_KEY = 'pentest-server-config';
 
@@ -21,6 +23,7 @@ const defaultServerConfig: ServerConfig = {
 };
 
 export default function Index() {
+  const { user, signOut } = useAuth();
   const [selectedTool, setSelectedTool] = useState<PentestTool | null>(null);
   const [currentScan, setCurrentScan] = useState<ScanResult | null>(null);
   const [isRunning, setIsRunning] = useState(false);
@@ -286,6 +289,12 @@ export default function Index() {
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Zap className="w-4 h-4 text-primary animate-pulse" />
             <span>{pentestTools.length} Tools Ready</span>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground border-l border-border pl-3">
+            <span>{user?.email}</span>
+            <Button variant="ghost" size="sm" onClick={signOut} className="h-7 px-2">
+              <LogOut className="w-4 h-4" />
+            </Button>
           </div>
         </div>
       </header>
