@@ -4,6 +4,11 @@ import { createServer } from 'http';
 
 const PORT = process.env.PORT || 8080;
 
+// In a real-world scenario, this would be a secure, dynamically generated token
+// or a robust authentication mechanism (e.g., JWT, session management).
+// For this example, we'll use a simple static token for demonstration purposes.
+const AUTH_TOKEN = process.env.AUTH_TOKEN || 'supersecrettoken123'; 
+
 // Create HTTP server
 const server = createServer((req, res) => {
   // CORS headers for health check
@@ -27,7 +32,21 @@ const server = createServer((req, res) => {
 });
 
 // Create WebSocket server
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ noServer: true }); // Use noServer to handle upgrade manually
+
+server.on('upgrade', (request, socket, head) => {
+  const url = new URL(request.url, `http://${request.headers.host}`);
+  const token = url.searchParams.get('token');
+
+  if (token === AUTH_TOKEN) {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, request);
+    });
+  } else {
+    socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+    socket.destroy();
+  }
+});
 
 console.log(`
 ╔══════════════════════════════════════════════════════════════╗
@@ -35,7 +54,7 @@ console.log(`
 ║   🛡️  PENTEST COMMAND CENTER - TERMINAL SERVER              ║
 ║                                                              ║
 ║   WebSocket server starting on port ${PORT}                    ║
-║   Connect your web UI to: ws://localhost:${PORT}               ║
+║   Connect your web UI to: ws://localhost:${PORT}?token=<YOUR_TOKEN>               ║
 ║                                                              ║
 ║   ⚠️  WARNING: This server executes shell commands!          ║
 ║   Only run this on trusted networks.                         ║
@@ -62,6 +81,8 @@ wss.on('connection', (ws, req) => {
       const message = JSON.parse(data.toString());
       console.log(`[${clientId}] Received:`, message.type);
       
+      // Basic authorization: only allow 'execute' and 'cancel' if authenticated
+      // In a real app, this would be more granular based on user roles/permissions
       switch (message.type) {
         case 'execute':
           executeCommand(ws, clientId, message);
