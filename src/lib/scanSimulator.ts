@@ -540,21 +540,7 @@ const simulatedOutputs: Record<string, (target: string, values: Record<string, a
     `    - Bot Detection: Yes (JavaScript challenge)`,
     `    - Geo-blocking: Unknown`,
     ``,
-    values.mode === 'bypass' ? `[+] Testing bypass techniques...
-
-[*] Testing XSS payloads...
-    Blocked: <script>alert(1)</script>
-    Blocked: <img src=x onerror=alert(1)>
-    [!] BYPASS: <svg/onload=alert(1)>
-    [!] BYPASS: <body onpageshow=alert(1)>
-
-[*] Testing SQLi payloads...
-    Blocked: ' OR '1'='1
-    Blocked: UNION SELECT
-    [!] BYPASS: '/**/OR/**/1=1--
-    [!] BYPASS: /*!50000UNION*/SELECT
-
-[+] Successful bypasses found: 4` : '',
+    values.mode === 'bypass' ? `[+] Testing bypass techniques...\n\n[*] Testing XSS payloads...\n    Blocked: <script>alert(1)</script>\n    Blocked: <img src=x onerror=alert(1)>\n    [!] BYPASS: <svg/onload=alert(1)>\n    [!] BYPASS: <body onpageshow=alert(1)>\n\n[*] Testing SQLi payloads...\n    Blocked: ' OR '1'='1\n    Blocked: UNION SELECT\n    [!] BYPASS: '/**/OR/**/1=1--\n    [!] BYPASS: /*!50000UNION*/SELECT\n\n[+] Successful bypasses found: 4` : '',
     ``,
     `[+] WAF Fingerprint:`,
     `    Vendor: Cloudflare`,
@@ -709,7 +695,7 @@ const simulatedOutputs: Record<string, (target: string, values: Record<string, a
     `[!] Algorithm Confusion Attack Possible`,
     `    Current: RS256 (Asymmetric)`,
     `    [*] Testing alg:none...`,
-    `    [!] VULNERABLE: Server accepts alg:none`,
+    `    [+] SAFE: Server rejects alg:none`,
     ``,
     `[!] Key Confusion Attack`,
     `    [*] Testing RS256 -> HS256...`,
