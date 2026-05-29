@@ -29,19 +29,7 @@ const server = createServer((req, res) => {
 // Create WebSocket server
 const wss = new WebSocketServer({ server });
 
-console.log(`
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║   🛡️  PENTEST COMMAND CENTER - TERMINAL SERVER              ║
-║                                                              ║
-║   WebSocket server starting on port ${PORT}                    ║
-║   Connect your web UI to: ws://localhost:${PORT}               ║
-║                                                              ║
-║   ⚠️  WARNING: This server executes shell commands!          ║
-║   Only run this on trusted networks.                         ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
-`);
+console.log(`\n╔══════════════════════════════════════════════════════════════╗\n║                                                              ║\n║   🛡️  PENTEST COMMAND CENTER - TERMINAL SERVER              ║\n║                                                              ║\n║   WebSocket server starting on port ${PORT}                    ║\n║   Connect your web UI to: ws://localhost:${PORT}               ║\n║                                                              ║\n║   ⚠️  WARNING: This server executes shell commands!          ║\n║   Only run this on trusted networks.                         ║\n║                                                              ║\n╚══════════════════════════════════════════════════════════════╝\n`);
 
 // Track active processes
 const activeProcesses = new Map();
@@ -124,9 +112,9 @@ function executeCommand(ws, clientId, message) {
   const cmd = parts[0];
   const args = parts.slice(1);
 
-  // Spawn the process
+  // Spawn the process without shell: true to prevent injection
   const proc = spawn(cmd, args, {
-    shell: true,
+    // shell: true, // Removed to prevent command injection
     env: { ...process.env, TERM: 'xterm-256color' }
   });
 
