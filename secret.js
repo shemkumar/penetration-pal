@@ -1,7 +1,7 @@
 // Dummy secrets for testing scanner only
 
-const AWS_ACCESS_KEY_ID = "AKIAIOSFODNN7EXAMPLE";
-const AWS_SECRET_ACCESS_KEY = ""; // Removed for security reasons
+const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID || "";
+const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY || ""; // Removed for security reasons
 
 const GITHUB_TOKEN = "ghp_abcdefghijklmnopqrstuvwxyz1234567890ABCD";
 
